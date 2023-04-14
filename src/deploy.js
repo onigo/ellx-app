@@ -1,16 +1,16 @@
+import aws from 'aws-sdk';
 import { exec } from 'child_process';
 import chokidar from 'chokidar';
-import { cps } from 'conclure/effects';
 import { all } from 'conclure/combinators';
+import { cps } from 'conclure/effects';
+import fs from "fs";
 import { readdir, readFile } from 'fs/promises';
-import { join } from 'path';
-import { pathToFileURL, fileURLToPath } from 'url';
 import md5 from 'md5';
+import { join } from 'path';
+import { fileURLToPath, pathToFileURL } from 'url';
 import reactiveBuild from './bundler/reactive_build.js';
-import { abortableFetch } from './utils/fetch.js';
-import { loadBody as parseEllx } from './sandbox/body_parse.js';
 import { resolveIndex } from './resolve_index.js';
-
+import { loadBody as parseEllx } from './sandbox/body_parse.js';
 const execCommand = (cmd, cb) => {
   const child = exec(cmd, (err, stdout, stderr) => {
     console.log(stdout);
@@ -94,16 +94,6 @@ export function* deploy(rootDir, { env, styles }) {
 
   console.log(`Bundle ready. Generated ${Object.keys(modules).length} entries`);
 
-  // ****** DEPLOY ******
-
-  const authJson = JSON.parse(yield readFile(`${rootDir}/.ellx_auth.json`, 'utf8'));
-
-  const { apiUrl, appId, token, domain } = authJson[env] || {};
-
-  if (!apiUrl || !appId || !token || !domain) {
-    throw new Error(`Environment ${env} not found or incomplete in .ellx_auth.json`);
-  }
-
   // Extract the files to deploy and calculate their hashes
   const toDeploy = new Map();
 
@@ -176,35 +166,46 @@ export function* deploy(rootDir, { env, styles }) {
   console.log(`Deploying ${toDeploy.size} files...`);
   console.log('Get deployment URLs...');
 
-  const publishUrl = `${apiUrl}/publish/${appId}`;
+  // const publishUrl = `${apiUrl}/publish/${appId}`;
 
-  const { body } = yield abortableFetch(publishUrl, {
-    method: 'POST',
-    credentials: 'include',
-    headers: {
-      'Cookie': `samesite=1; token=${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      files: [...toDeploy].map(([path]) => path),
-      domain,
-      enable: true
-    })
+  console.log(toDeploy);
+  const data = JSON.parse(fs.readFileSync("deploy.json", "utf8"));
+
+  if (!data[env]) {
+    throw new Error(`No deployment configuration for environment ${env}`);
+  }
+
+  const deployConfig = data[env];
+
+  const s3 = new aws.S3({
+    region: 'ap-northeast-1',
   });
+  const cf = new aws.CloudFront();
+  let handles = [];
+  for (let [path, content] of toDeploy) {
 
-  console.log('Deploy to S3...');
+    console.log("Uploading " + path, content.length, getContentType(path), deployConfig.s3);
+    handles.push(s3.putObject({
+      Bucket: deployConfig.s3,
+      Key: path.slice(1),
+      Body: content,
+      ContentType: getContentType(path),
+      ACL: 'public-read',
+      CacheControl: path === '/index.html' ? 'max-age=60' : 'max-age=31536000',
+    }).promise());
+  }
+  const ress = yield Promise.all(handles);
 
-  yield all(JSON.parse(body)
-    .map(({ path, url }) => abortableFetch(url, {
-      method: 'PUT',
-      body: toDeploy.get(path),
-      headers: {
-        'Content-Type': getContentType(path),
-        'Cache-Control': path === '/index.html' ? 'max-age=60' : 'max-age=31536000'
+  const res = yield cf.createInvalidation({
+    DistributionId: deployConfig.cloudfront,
+    InvalidationBatch: {
+      Paths: {
+        Quantity: 1,
+        Items: ['/index.html'],
       },
-    })
-  ));
+      CallerReference: Date.now() + deployConfig.cloudfront
+    }
+  }).promise();
 
-  console.log(`Deployed to https://${domain}`);
-  console.log(`It should be available in a few minutes`);
+  console.log('Deployment complete', deployConfig.url, ress, res);
 }
