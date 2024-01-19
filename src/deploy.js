@@ -4,7 +4,7 @@ import { all } from "conclure/combinators";
 import { cps } from "conclure/effects";
 import { readdir, readFile } from "fs/promises";
 import md5 from "md5";
-import { join, path } from "path";
+import { join } from "path";
 import fs from "fs";
 import { Client } from "ssh2";
 import { fileURLToPath, pathToFileURL } from "url";
