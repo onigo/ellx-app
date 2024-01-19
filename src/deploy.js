@@ -1,9 +1,7 @@
-import aws from "aws-sdk";
 import { exec } from "child_process";
 import chokidar from "chokidar";
 import { all } from "conclure/combinators";
 import { cps } from "conclure/effects";
-import fs from "fs";
 import { readdir, readFile } from "fs/promises";
 import md5 from "md5";
 import { join } from "path";
@@ -24,7 +22,7 @@ function* collectEntryPoints(dir) {
   const items = yield readdir(dir, { withFileTypes: true });
 
   const files = yield all(
-    items.map(function* (item) {
+    items.map(function*(item) {
       const fullname = join(dir, item.name);
 
       if (item.isDirectory()) {
@@ -34,7 +32,7 @@ function* collectEntryPoints(dir) {
       if (item.isFile() && /\.(ellx|js)$/.test(item.name)) {
         return [fullname];
       }
-    })
+    }),
   );
   return files.filter(Boolean).flat();
 }
@@ -56,7 +54,7 @@ function build(entryPoints, rootDir, cb) {
       (modules) =>
         cancel()
           .then(() => cb(null, modules))
-          .catch((e) => cb(e))
+          .catch((e) => cb(e)),
     );
   });
 
@@ -86,11 +84,11 @@ export function* deploy(rootDir, { env, styles }) {
         .filter((id) => id.endsWith(".ellx"))
         .map(function* loadSheet(id) {
           const { nodes } = parseEllx(
-            yield readFile(join(rootDir, fileURLToPath(id)), "utf8")
+            yield readFile(join(rootDir, fileURLToPath(id)), "utf8"),
           );
           return [id, nodes];
-        })
-    )
+        }),
+    ),
   );
 
   // Make the bundle
@@ -107,7 +105,7 @@ export function* deploy(rootDir, { env, styles }) {
     const hash = md5(code);
     const hashedUrlPath = urlPath.replace(
       /\.[^.]*$/,
-      (ext) => "-" + hash.slice(0, 8) + ext
+      (ext) => "-" + hash.slice(0, 8) + ext,
     );
 
     toDeploy.set(hashedUrlPath, code);
@@ -132,17 +130,17 @@ export function* deploy(rootDir, { env, styles }) {
     "/bootstrap.js",
     yield readFile(
       join(rootDir, "node_modules/@ellx/app/src/bootstrap/bootstrap.js"),
-      "utf8"
-    )
+      "utf8",
+    ),
   );
 
   const modulesSrc = appendFile(
     "/modules.js",
-    "export default " + JSON.stringify(modules)
+    "export default " + JSON.stringify(modules),
   );
   const sheetsSrc = appendFile(
     "/sheets.js",
-    "export default " + JSON.stringify(sheets)
+    "export default " + JSON.stringify(sheets),
   );
 
   // Prepare index.html body
@@ -174,7 +172,7 @@ export function* deploy(rootDir, { env, styles }) {
 
   yield cps(
     execCommand,
-    `npx tailwindcss -c ${twConfig} -i ${twStylesIn} -o ${twStylesOut}`
+    `npx tailwindcss -c ${twConfig} -i ${twStylesIn} -o ${twStylesOut}`,
   );
 
   const cssSrc = appendFile("/styles.css", yield readFile(twStylesOut, "utf8"));
@@ -194,48 +192,52 @@ export function* deploy(rootDir, { env, styles }) {
     throw new Error(`No deployment configuration for environment ${env}`);
   }
 
-  const deployConfig = data[env];
+  const fs = require("fs");
+  const path = require("path");
+  const Client = require("ssh2").Client;
+  const {
+    remotePath,
+    remoteServer,
+    remoteUser,
+    remotePort,
+    privateKey,
+    passphrase,
+  } = data[env];
 
-  const s3 = new aws.S3({
-    region: "ap-northeast-1",
-  });
-  const cf = new aws.CloudFront();
-  let handles = [];
-  for (let [path, content] of toDeploy) {
-    console.log(
-      "Uploading " + path,
-      content.length,
-      getContentType(path),
-      deployConfig.s3
-    );
-    handles.push(
-      s3
-        .putObject({
-          Bucket: deployConfig.s3,
-          Key: path.slice(1),
-          Body: content,
-          ContentType: getContentType(path),
-          ACL: "public-read",
-          CacheControl:
-            path === "/index.html" ? "max-age=60" : "max-age=31536000",
-        })
-        .promise()
-    );
-  }
-  const ress = yield Promise.all(handles);
+  const conn = new Client();
 
-  const res = yield cf
-    .createInvalidation({
-      DistributionId: deployConfig.cloudfront,
-      InvalidationBatch: {
-        Paths: {
-          Quantity: 1,
-          Items: ["/index.html"],
-        },
-        CallerReference: Date.now() + deployConfig.cloudfront,
-      },
+  conn
+    .on("ready", function() {
+      toDeploy.forEach(([localPath, content]) => {
+        const remoteFilePath = path.join(remotePath, path.basename(localPath));
+
+        console.log(
+          `Uploading ${localPath} to ${remoteServer}:${remoteFilePath}`,
+        );
+
+        conn.sftp(function(err, sftp) {
+          if (err) throw err;
+
+          const writeStream = sftp.createWriteStream(remoteFilePath);
+
+          writeStream.on("close", function() {
+            console.log(`File ${localPath} uploaded successfully.`);
+          });
+
+          // Pipe the local file content to the remote file
+          writeStream.end(content);
+        });
+      });
+
+      conn.end();
     })
-    .promise();
+    .connect({
+      host: remoteServer,
+      port: remotePort,
+      username: remoteUser,
+      privateKey: privateKey,
+      passphrase: passphrase,
+    });
 
-  console.log("Deployment complete", deployConfig.url, ress, res);
+  console.log("Deployment complete");
 }
