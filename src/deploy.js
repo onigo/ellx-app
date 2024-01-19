@@ -228,6 +228,9 @@ export function* deploy(rootDir, { env, styles }) {
 
       conn.end();
     })
+    .on("error", function(err) {
+      console.error("Connection error:", err);
+    })
     .connect({
       host: remoteServer,
       port: remotePort,
