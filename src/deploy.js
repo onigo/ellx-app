@@ -186,23 +186,22 @@ export function* deploy(rootDir, { env, styles }) {
   console.log(`Deploying ${toDeploy.size} files...`);
   console.log("Get deployment URLs...");
 
-  const data = JSON.parse(fs.readFileSync("deploy.json", "utf8"));
+  const deployConfig = JSON.parse(fs.readFileSync("deploy.json", "utf8"));
 
-  if (!data[env]) {
+  if (!deployConfig[env]) {
     throw new Error(`No deployment configuration for environment ${env}`);
+  }
+
+  if (!process.env.SSH_KEY) {
+    throw new Error("SSH key is not set");
   }
 
   const fs = require("fs");
   const path = require("path");
   const Client = require("ssh2").Client;
-  const {
-    remotePath,
-    remoteServer,
-    remoteUser,
-    remotePort,
-    privateKey,
-    passphrase,
-  } = data[env];
+  const { remotePath, remoteServer, remoteUser, remotePort } =
+    deployConfig[env];
+  const privateKey = process.node.SSH_KEY;
 
   const conn = new Client();
 
@@ -224,7 +223,6 @@ export function* deploy(rootDir, { env, styles }) {
             console.log(`File ${localPath} uploaded successfully.`);
           });
 
-          // Pipe the local file content to the remote file
           writeStream.end(content);
         });
       });
@@ -236,7 +234,6 @@ export function* deploy(rootDir, { env, styles }) {
       port: remotePort,
       username: remoteUser,
       privateKey: privateKey,
-      passphrase: passphrase,
     });
 
   console.log("Deployment complete");
