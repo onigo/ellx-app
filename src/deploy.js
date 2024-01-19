@@ -200,7 +200,7 @@ export function* deploy(rootDir, { env, styles }) {
 
   const { remotePath, remoteServer, remoteUser, remotePort } =
     deployConfig[env];
-  const privateKey = process.node.SSH_KEY;
+  const privateKey = process.env.SSH_KEY;
 
   const conn = new Client();
 
