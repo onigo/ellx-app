@@ -4,8 +4,9 @@ import { all } from "conclure/combinators";
 import { cps } from "conclure/effects";
 import { readdir, readFile } from "fs/promises";
 import md5 from "md5";
-import { join } from "path";
+import { join, path } from "path";
 import fs from "fs";
+import { Client } from "ssh2";
 import { fileURLToPath, pathToFileURL } from "url";
 import reactiveBuild from "./bundler/reactive_build.js";
 import { resolveIndex } from "./resolve_index.js";
@@ -197,8 +198,6 @@ export function* deploy(rootDir, { env, styles }) {
     throw new Error("SSH key is not set");
   }
 
-  const path = require("path");
-  const Client = require("ssh2").Client;
   const { remotePath, remoteServer, remoteUser, remotePort } =
     deployConfig[env];
   const privateKey = process.node.SSH_KEY;
