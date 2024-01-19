@@ -201,6 +201,7 @@ export function* deploy(rootDir, { env, styles }) {
   const { remotePath, remoteServer, remoteUser, remotePort } =
     deployConfig[env];
   const privateKey = process.env.SSH_KEY;
+  console.log(privateKey.slice(1, 5));
 
   const conn = new Client();
 
@@ -229,7 +230,7 @@ export function* deploy(rootDir, { env, styles }) {
       conn.end();
     })
     .on("error", function(err) {
-      console.error("Connection error:", err);
+      throw new Error(`Connection error: ${err} key is not set`);
     })
     .connect({
       host: remoteServer,
