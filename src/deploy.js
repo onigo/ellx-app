@@ -221,18 +221,26 @@ export function* deploy(rootDir, { env, styles }) {
           // Check if the directory exists
           const isDirectoryExists = await new Promise((resolve) => {
             sftp.stat(remoteDir, (err, stats) => {
-              resolve(!err && stats && stats.isDirectory());
+              if (err) {
+                console.error(`Error checking directory existence: ${err}`);
+                resolve(false);
+              } else {
+                resolve(stats && stats.isDirectory());
+              }
             });
           });
 
           // If the directory doesn't exist, create it
           if (!isDirectoryExists) {
+            console.log(`Creating directory: ${remoteDir}`);
             await new Promise((resolve, reject) => {
-              sftp.mkdir(remoteDir, { recursive: true }, function(err) {
+              sftp.mkdir(remoteDir, function(err) {
                 // Ignore error if directory already exists
                 if (err && err.code !== 4 /* SSH_FX_FAILURE */) {
+                  console.error(`Error creating directory: ${err}`);
                   reject(err);
                 } else {
+                  console.log(`Directory created: ${remoteDir}`);
                   resolve();
                 }
               });
