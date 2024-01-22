@@ -204,9 +204,10 @@ export function* deploy(rootDir, { env, styles }) {
   const privateKey = process.env.SSH_KEY;
 
   const conn = new Client();
-  const sftp = new SftpClient();
   conn
     .on("ready", async () => {
+      const sftp = new SftpClient(); // Create a new SftpClient instance inside the 'ready' event
+
       try {
         for (const [localPath, content] of toDeploy) {
           const remoteFilePath = join(remotePath, localPath);
