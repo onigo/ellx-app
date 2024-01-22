@@ -206,7 +206,7 @@ export function* deploy(rootDir, { env, styles }) {
 
   conn
     .on("ready", function() {
-      toDeploy.forEach(([localPath, content]) => {
+      for (let [localPath, content] of toDeploy) {
         const remoteFilePath = join(remotePath, basename(localPath));
 
         console.log(
@@ -224,7 +224,7 @@ export function* deploy(rootDir, { env, styles }) {
 
           writeStream.end(content);
         });
-      });
+      }
 
       conn.end();
     })
