@@ -4,8 +4,9 @@ import { all } from "conclure/combinators";
 import { cps } from "conclure/effects";
 import { readdir, readFile } from "fs/promises";
 import md5 from "md5";
-import { join, dirname } from "path";
+import { join } from "path";
 import fs from "fs";
+import SftpClient from "ssh2-sftp-client";
 import { Client } from "ssh2";
 import { fileURLToPath, pathToFileURL } from "url";
 import reactiveBuild from "./bundler/reactive_build.js";
@@ -203,83 +204,35 @@ export function* deploy(rootDir, { env, styles }) {
   const privateKey = process.env.SSH_KEY;
 
   const conn = new Client();
-
+  const sftp = new SftpClient();
   conn
-    .on("ready", async function() {
-      let sftp;
+    .on("ready", async () => {
       try {
-        sftp = await new Promise((resolve, reject) => {
-          conn.sftp(function(err, sftp) {
-            if (err) reject(err);
-            resolve(sftp);
-          });
-        });
-
-        for (let [localPath, content] of toDeploy) {
+        for (const [localPath, content] of toDeploy) {
           const remoteFilePath = join(remotePath, localPath);
-          const remoteDir = dirname(remoteFilePath);
-
-          // Recursively create all parent directories if they don't exist
-          await new Promise((resolve, reject) => {
-            const createDirectoriesRecursively = (currentPath, callback) => {
-              const parts = currentPath.split("/");
-              let currentPathIndex = 1;
-
-              const createNextDirectory = () => {
-                const pathSoFar = parts.slice(0, currentPathIndex).join("/");
-                sftp.mkdir(pathSoFar, {}, (mkdirErr) => {
-                  if (mkdirErr && mkdirErr.code !== 4 /* SSH_FX_FAILURE */) {
-                    console.error(`Error creating directory: ${pathSoFar}`);
-                    reject(mkdirErr);
-                  } else {
-                    currentPathIndex++;
-                    if (currentPathIndex <= parts.length) {
-                      createNextDirectory();
-                    } else {
-                      callback();
-                    }
-                  }
-                });
-              };
-
-              createNextDirectory();
-            };
-
-            createDirectoriesRecursively(remoteDir, resolve);
-          });
 
           console.log(
             `Uploading ${localPath} to ${remoteServer}:${remoteFilePath}`,
           );
 
-          await new Promise((resolve, reject) => {
-            const writeStream = sftp.createWriteStream(remoteFilePath);
+          // Validate and create directories if needed
+          await createRemoteDirectories(remoteFilePath);
 
-            writeStream.on("close", function() {
-              console.log(`File ${localPath} uploaded successfully.`);
-              resolve();
-            });
+          await sftp.put(Buffer.from(content), remoteFilePath);
 
-            writeStream.on("error", function(err) {
-              reject(err);
-            });
-
-            writeStream.end(content);
-          });
+          console.log(`File ${localPath} uploaded successfully.`);
         }
 
         console.log("All files uploaded successfully.");
       } catch (err) {
         console.error(`Error during deployment: ${err}`);
       } finally {
-        if (sftp) {
-          sftp.end(); // Close the sftp channel
-        }
+        await sftp.end();
         conn.end();
         console.log("Deployment complete");
       }
     })
-    .on("error", function(err) {
+    .on("error", (err) => {
       console.error(`Error during connection: ${err}`);
     })
     .on("end", () => {
@@ -292,4 +245,17 @@ export function* deploy(rootDir, { env, styles }) {
       privateKey: privateKey,
       debug: console.log,
     });
+}
+async function createRemoteDirectories(remoteFilePath) {
+  const directories = remoteFilePath.split("/").slice(0, -1);
+
+  for (let i = 1; i <= directories.length; i++) {
+    const partialPath = directories.slice(0, i).join("/");
+    try {
+      await sftp.stat(partialPath);
+    } catch (err) {
+      // Directory does not exist, create it
+      await sftp.mkdir(partialPath);
+    }
+  }
 }
