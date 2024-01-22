@@ -205,34 +205,55 @@ export function* deploy(rootDir, { env, styles }) {
   const conn = new Client();
 
   conn
-    .on("ready", function() {
-      for (let [localPath, content] of toDeploy) {
-        const remoteFilePath = join(remotePath, basename(localPath));
-
-        console.log(
-          `Uploading ${localPath} to ${remoteServer}:${remoteFilePath}`,
-        );
-
-        conn.sftp(function(err, sftp) {
-          if (err) throw err;
-
-          const writeStream = sftp.createWriteStream(remoteFilePath);
-
-          writeStream.on("close", function() {
-            console.log(`File ${localPath} uploaded successfully.`);
+    .on("ready", async function() {
+      let sftp;
+      try {
+        sftp = await new Promise((resolve, reject) => {
+          conn.sftp(function(err, sftp) {
+            if (err) reject(err);
+            resolve(sftp);
           });
-
-          writeStream.end(content);
         });
-      }
 
-      conn.end();
+        for (let [localPath, content] of toDeploy) {
+          const remoteFilePath = join(remotePath, basename(localPath));
+
+          console.log(
+            `Uploading ${localPath} to ${remoteServer}:${remoteFilePath}`,
+          );
+
+          await new Promise((resolve, reject) => {
+            const writeStream = sftp.createWriteStream(remoteFilePath);
+
+            writeStream.on("close", function() {
+              console.log(`File ${localPath} uploaded successfully.`);
+              resolve();
+            });
+
+            writeStream.on("error", function(err) {
+              reject(err);
+            });
+
+            writeStream.end(content);
+          });
+        }
+
+        console.log("All files uploaded successfully.");
+      } catch (err) {
+        console.error(`Error during deployment: ${err}`);
+      } finally {
+        if (sftp) {
+          sftp.end(); // Close the sftp channel
+        }
+        conn.end();
+        console.log("Deployment complete");
+      }
     })
     .on("error", function(err) {
-      throw new Error(`${err}`);
+      console.error(`Error during connection: ${err}`);
     })
     .on("end", () => {
-      console.log("Deployment complete");
+      console.log("Connection closed");
     })
     .connect({
       host: remoteServer,
