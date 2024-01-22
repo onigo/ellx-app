@@ -239,17 +239,6 @@ export function* deploy(rootDir, { env, styles }) {
         await client.end();
         console.log("Deployment complete");
       }
-
-      console.log("Connected. Check if dir already exists");
-      const alreadyExists = await client.exists(dir);
-
-      if (alreadyExists) {
-        console.log(`Path ${dir} already exists!`);
-      } else {
-        console.log("Making directory");
-        await client.mkdir(dir, true);
-        console.log("Directory created");
-      }
     })
     .catch((err) => {
       console.log(`Error: ${err.message}`);
@@ -264,10 +253,7 @@ async function createRemoteDirectories(client, remoteDir) {
   for (const part of parts) {
     currentDir = join(currentDir, part);
 
-    const exists = await client.exists(currentDir);
-    if (!exists) {
-      console.log(`Creating directory: ${currentDir}`);
-      await client.mkdir(currentDir);
-    }
+    console.log(`Creating directory: ${currentDir}`);
+    await client.mkdir(currentDir, true);
   }
 }
