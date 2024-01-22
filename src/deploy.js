@@ -4,7 +4,7 @@ import { all } from "conclure/combinators";
 import { cps } from "conclure/effects";
 import { readdir, readFile } from "fs/promises";
 import md5 from "md5";
-import { join } from "path";
+import { join, basename } from "path";
 import fs from "fs";
 import { Client } from "ssh2";
 import { fileURLToPath, pathToFileURL } from "url";
@@ -207,7 +207,7 @@ export function* deploy(rootDir, { env, styles }) {
   conn
     .on("ready", function() {
       toDeploy.forEach(([localPath, content]) => {
-        const remoteFilePath = join(remotePath, path.basename(localPath));
+        const remoteFilePath = join(remotePath, basename(localPath));
 
         console.log(
           `Uploading ${localPath} to ${remoteServer}:${remoteFilePath}`,
