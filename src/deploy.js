@@ -218,34 +218,30 @@ export function* deploy(rootDir, { env, styles }) {
         for (let [localPath, content] of toDeploy) {
           const remoteFilePath = join(remotePath, localPath);
           const remoteDir = dirname(remoteFilePath);
-          // Check if the directory exists
-          const isDirectoryExists = await new Promise((resolve) => {
-            sftp.stat(remoteDir, (err, stats) => {
-              if (err) {
-                console.error(`Error checking directory existence: ${err}`);
-                resolve(false);
-              } else {
-                resolve(stats && stats.isDirectory());
-              }
-            });
-          });
+          // Recursively create all parent directories if they don't exist
+          await new Promise((resolve, reject) => {
+            const createDirectoriesRecursively = (currentPath) => {
+              const parentDir = dirname(currentPath);
 
-          // If the directory doesn't exist, create it
-          if (!isDirectoryExists) {
-            console.log(`Creating directory: ${remoteDir}`);
-            await new Promise((resolve, reject) => {
-              sftp.mkdir(remoteDir, function(err) {
-                // Ignore error if directory already exists
-                if (err && err.code !== 4 /* SSH_FX_FAILURE */) {
-                  console.error(`Error creating directory: ${err}`);
-                  reject(err);
-                } else {
-                  console.log(`Directory created: ${remoteDir}`);
-                  resolve();
+              sftp.stat(parentDir, (err, _stats) => {
+                if (err) {
+                  // Parent directory doesn't exist, create it
+                  createDirectoriesRecursively(parentDir);
+                  sftp.mkdir(parentDir, { recursive: true }, (mkdirErr) => {
+                    if (mkdirErr) {
+                      console.error(`Error creating directory: ${parentDir}`);
+                      reject(mkdirErr);
+                    }
+                  });
                 }
               });
-            });
-          }
+            };
+
+            createDirectoriesRecursively(remoteDir);
+
+            // Wait for a short time to ensure all parent directories are created
+            setTimeout(resolve, 500);
+          });
 
           console.log(
             `Uploading ${localPath} to ${remoteServer}:${remoteFilePath}`,
