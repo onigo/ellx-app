@@ -218,29 +218,33 @@ export function* deploy(rootDir, { env, styles }) {
         for (let [localPath, content] of toDeploy) {
           const remoteFilePath = join(remotePath, localPath);
           const remoteDir = dirname(remoteFilePath);
+
           // Recursively create all parent directories if they don't exist
           await new Promise((resolve, reject) => {
-            const createDirectoriesRecursively = (currentPath) => {
+            const createDirectoriesRecursively = (currentPath, callback) => {
               const parentDir = dirname(currentPath);
 
-              sftp.stat(parentDir, (err, _stats) => {
+              sftp.stat(parentDir, (err, stats) => {
                 if (err) {
                   // Parent directory doesn't exist, create it
-                  createDirectoriesRecursively(parentDir);
-                  sftp.mkdir(parentDir, { recursive: true }, (mkdirErr) => {
-                    if (mkdirErr) {
-                      console.error(`Error creating directory: ${parentDir}`);
-                      reject(mkdirErr);
-                    }
+                  createDirectoriesRecursively(parentDir, () => {
+                    sftp.mkdir(parentDir, { recursive: true }, (mkdirErr) => {
+                      if (mkdirErr) {
+                        console.error(`Error creating directory: ${parentDir}`);
+                        reject(mkdirErr);
+                      } else {
+                        callback();
+                      }
+                    });
                   });
+                } else {
+                  // Parent directory exists, continue to the next level
+                  callback();
                 }
               });
             };
 
-            createDirectoriesRecursively(remoteDir);
-
-            // Wait for a short time to ensure all parent directories are created
-            setTimeout(resolve, 500);
+            createDirectoriesRecursively(remoteDir, resolve);
           });
 
           console.log(
