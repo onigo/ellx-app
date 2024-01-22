@@ -229,7 +229,6 @@ export function* deploy(rootDir, { env, styles }) {
       conn.end();
     })
     .on("error", function(err) {
-      console.log("key", privateKey.slice(1, 5));
       throw new Error(`${err}`);
     })
     .on("end", () => {
@@ -240,5 +239,6 @@ export function* deploy(rootDir, { env, styles }) {
       port: remotePort,
       username: remoteUser,
       privateKey: privateKey,
+      debug: console.log,
     });
 }
