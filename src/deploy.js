@@ -245,9 +245,11 @@ export function* deploy(rootDir, { env, styles }) {
 }
 async function createRemoteDirectories(client, remoteDir) {
   let parts = remoteDir.split("/");
-  for (let i = 1; i <= parts.length; i++) {
-    let partialPath = parts.slice(0, i).join("/");
+
+  for (let i = 0; i < parts.length; i++) {
+    let partialPath = parts.slice(0, i + 1).join("/");
     let exists = await client.exists(partialPath);
+
     if (!exists) {
       console.log(`Creating directory: ${partialPath}`);
       await client.mkdir(partialPath);
