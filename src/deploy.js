@@ -241,26 +241,22 @@ export function* deploy(rootDir, { env, styles }) {
       }
 
       console.log("Connected. Check if dir already exists");
-      return client.exists(targetPath);
-    })
-    .then((alreadyExists) => {
+      const alreadyExists = await client.exists(targetPath);
+
       if (alreadyExists) {
         console.log(`Path ${targetPath} already exists!`);
-        return false;
       } else {
         console.log("Making directory");
-        return client.mkdir(targetPath, true);
+        await client.mkdir(targetPath, true);
+        console.log("Directory created");
       }
-    })
-    .then(() => {
-      console.log("Directory created");
-      return client.end();
     })
     .catch((err) => {
       console.log(`Error: ${err.message}`);
       client.end();
     });
 }
+
 async function createRemoteDirectories(client, remoteDir) {
   const parts = remoteDir.split("/");
   let currentDir = "";
