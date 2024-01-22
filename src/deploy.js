@@ -222,9 +222,11 @@ export function* deploy(rootDir, { env, styles }) {
           console.log(
             `Uploading ${localPath} to ${remoteServer}:${remoteFilePath}`,
           );
+
           // Validate and create parent directories if needed
           await createRemoteDirectories(client, dir);
-          // Upload file
+
+          // Upload the file
           await client.put(Buffer.from(content), remoteFilePath);
 
           console.log(`File ${localPath} uploaded successfully.`);
@@ -237,6 +239,22 @@ export function* deploy(rootDir, { env, styles }) {
         await client.end();
         console.log("Deployment complete");
       }
+
+      console.log("Connected. Check if dir already exists");
+      return client.exists(targetPath);
+    })
+    .then((alreadyExists) => {
+      if (alreadyExists) {
+        console.log(`Path ${targetPath} already exists!`);
+        return false;
+      } else {
+        console.log("Making directory");
+        return client.mkdir(targetPath, true);
+      }
+    })
+    .then(() => {
+      console.log("Directory created");
+      return client.end();
     })
     .catch((err) => {
       console.log(`Error: ${err.message}`);
@@ -244,15 +262,16 @@ export function* deploy(rootDir, { env, styles }) {
     });
 }
 async function createRemoteDirectories(client, remoteDir) {
-  let parts = remoteDir.split("/");
+  const parts = remoteDir.split("/");
+  let currentDir = "";
 
-  for (let i = 0; i < parts.length; i++) {
-    let partialPath = parts.slice(0, i + 1).join("/");
-    let exists = await client.exists(partialPath);
+  for (const part of parts) {
+    currentDir = join(currentDir, part);
 
+    const exists = await client.exists(currentDir);
     if (!exists) {
-      console.log(`Creating directory: ${partialPath}`);
-      await client.mkdir(partialPath);
+      console.log(`Creating directory: ${currentDir}`);
+      await client.mkdir(currentDir);
     }
   }
 }
