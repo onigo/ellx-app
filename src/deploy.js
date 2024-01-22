@@ -218,18 +218,26 @@ export function* deploy(rootDir, { env, styles }) {
         for (let [localPath, content] of toDeploy) {
           const remoteFilePath = join(remotePath, localPath);
           const remoteDir = dirname(remoteFilePath);
-
-          // Create remote directory if it doesn't exist
-          await new Promise((resolve, reject) => {
-            sftp.mkdir(remoteDir, { recursive: true }, function(err) {
-              // Ignore error if directory already exists
-              if (err && err.code !== 4 /* SSH_FX_FAILURE */) {
-                reject(err);
-              } else {
-                resolve();
-              }
+          // Check if the directory exists
+          const isDirectoryExists = await new Promise((resolve) => {
+            sftp.stat(remoteDir, (err, stats) => {
+              resolve(!err && stats && stats.isDirectory());
             });
           });
+
+          // If the directory doesn't exist, create it
+          if (!isDirectoryExists) {
+            await new Promise((resolve, reject) => {
+              sftp.mkdir(remoteDir, { recursive: true }, function(err) {
+                // Ignore error if directory already exists
+                if (err && err.code !== 4 /* SSH_FX_FAILURE */) {
+                  reject(err);
+                } else {
+                  resolve();
+                }
+              });
+            });
+          }
 
           console.log(
             `Uploading ${localPath} to ${remoteServer}:${remoteFilePath}`,
