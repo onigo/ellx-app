@@ -4,10 +4,9 @@ import { all } from "conclure/combinators";
 import { cps } from "conclure/effects";
 import { readdir, readFile } from "fs/promises";
 import md5 from "md5";
-import { join } from "path";
+import { join, dirname } from "path";
 import fs from "fs";
 import SftpClient from "ssh2-sftp-client";
-import { Client } from "ssh2";
 import { fileURLToPath, pathToFileURL } from "url";
 import reactiveBuild from "./bundler/reactive_build.js";
 import { resolveIndex } from "./resolve_index.js";
@@ -203,23 +202,33 @@ export function* deploy(rootDir, { env, styles }) {
     deployConfig[env];
   const privateKey = process.env.SSH_KEY;
 
-  const conn = new Client();
-  conn
-    .on("ready", async () => {
-      const sftp = new SftpClient(); // Create a new SftpClient instance inside the 'ready' event
+  const config = {
+    host: remoteServer,
+    username: remoteUser,
+    port: remotePort,
+    privateKey: privateKey,
+  };
 
+  const client = new SftpClient();
+
+  client
+    .connect(config)
+    .then(async () => {
       try {
         for (const [localPath, content] of toDeploy) {
           const remoteFilePath = join(remotePath, localPath);
+          const dir = dirname(remoteFilePath);
 
           console.log(
             `Uploading ${localPath} to ${remoteServer}:${remoteFilePath}`,
           );
 
-          // Validate and create directories if needed
-          await createRemoteDirectories(sftp, remoteFilePath);
-
-          await sftp.put(Buffer.from(content), remoteFilePath);
+          let exists = await client.exists(dir);
+          if (exists) {
+            await client.put(Buffer.from(content), remoteFilePath);
+          } else {
+            await client.mkdir(dir);
+          }
 
           console.log(`File ${localPath} uploaded successfully.`);
         }
@@ -228,35 +237,15 @@ export function* deploy(rootDir, { env, styles }) {
       } catch (err) {
         console.error(`Error during deployment: ${err}`);
       } finally {
-        await sftp.end();
-        conn.end();
+        await client.end();
         console.log("Deployment complete");
       }
-    })
-    .on("error", (err) => {
-      console.error(`Error during connection: ${err}`);
-    })
-    .on("end", () => {
-      console.log("Connection closed");
-    })
-    .connect({
-      host: remoteServer,
-      port: remotePort,
-      username: remoteUser,
-      privateKey: privateKey,
-      debug: console.log,
-    });
-}
-async function createRemoteDirectories(sftp, remoteFilePath) {
-  const directories = remoteFilePath.split("/").slice(0, -1);
 
-  for (let i = 1; i <= directories.length; i++) {
-    const partialPath = directories.slice(0, i).join("/");
-    try {
-      await sftp.stat(partialPath);
-    } catch (err) {
-      // Directory does not exist, create it
-      await sftp.mkdir(partialPath);
-    }
-  }
+      console.log("Connected. Check if dir already exists");
+      return client.exists(targetPath);
+    })
+    .catch((err) => {
+      console.log(`Error: ${err.message}`);
+      client.end();
+    });
 }
