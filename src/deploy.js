@@ -207,7 +207,7 @@ export function* deploy(rootDir, { env, styles }) {
   conn
     .on("ready", function() {
       toDeploy.forEach(([localPath, content]) => {
-        const remoteFilePath = path.join(remotePath, path.basename(localPath));
+        const remoteFilePath = join(remotePath, path.basename(localPath));
 
         console.log(
           `Uploading ${localPath} to ${remoteServer}:${remoteFilePath}`,
@@ -232,12 +232,13 @@ export function* deploy(rootDir, { env, styles }) {
       console.log("key", privateKey.slice(1, 5));
       throw new Error(`${err}`);
     })
+    .on("end", () => {
+      console.log("Deployment complete");
+    })
     .connect({
       host: remoteServer,
       port: remotePort,
       username: remoteUser,
       privateKey: privateKey,
     });
-
-  console.log("Deployment complete");
 }
