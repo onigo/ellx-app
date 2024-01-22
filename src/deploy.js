@@ -253,7 +253,10 @@ async function createRemoteDirectories(client, remoteDir) {
   for (const part of parts) {
     currentDir = join(currentDir, part);
 
-    console.log(`Creating directory: ${currentDir}`);
-    await client.mkdir(currentDir, true);
+    const exists = await client.exists(currentDir);
+    if (!exists) {
+      console.log(`Creating directory: ${currentDir}`);
+      await client.mkdir(currentDir);
+    }
   }
 }
