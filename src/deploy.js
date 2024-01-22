@@ -1,12 +1,12 @@
-import aws from "aws-sdk";
 import { exec } from "child_process";
 import chokidar from "chokidar";
 import { all } from "conclure/combinators";
 import { cps } from "conclure/effects";
-import fs from "fs";
 import { readdir, readFile } from "fs/promises";
 import md5 from "md5";
-import { join } from "path";
+import { join, dirname } from "path";
+import fs from "fs";
+import SftpClient from "ssh2-sftp-client";
 import { fileURLToPath, pathToFileURL } from "url";
 import reactiveBuild from "./bundler/reactive_build.js";
 import { resolveIndex } from "./resolve_index.js";
@@ -24,7 +24,7 @@ function* collectEntryPoints(dir) {
   const items = yield readdir(dir, { withFileTypes: true });
 
   const files = yield all(
-    items.map(function* (item) {
+    items.map(function*(item) {
       const fullname = join(dir, item.name);
 
       if (item.isDirectory()) {
@@ -34,7 +34,7 @@ function* collectEntryPoints(dir) {
       if (item.isFile() && /\.(ellx|js)$/.test(item.name)) {
         return [fullname];
       }
-    })
+    }),
   );
   return files.filter(Boolean).flat();
 }
@@ -56,7 +56,7 @@ function build(entryPoints, rootDir, cb) {
       (modules) =>
         cancel()
           .then(() => cb(null, modules))
-          .catch((e) => cb(e))
+          .catch((e) => cb(e)),
     );
   });
 
@@ -86,11 +86,11 @@ export function* deploy(rootDir, { env, styles }) {
         .filter((id) => id.endsWith(".ellx"))
         .map(function* loadSheet(id) {
           const { nodes } = parseEllx(
-            yield readFile(join(rootDir, fileURLToPath(id)), "utf8")
+            yield readFile(join(rootDir, fileURLToPath(id)), "utf8"),
           );
           return [id, nodes];
-        })
-    )
+        }),
+    ),
   );
 
   // Make the bundle
@@ -107,7 +107,7 @@ export function* deploy(rootDir, { env, styles }) {
     const hash = md5(code);
     const hashedUrlPath = urlPath.replace(
       /\.[^.]*$/,
-      (ext) => "-" + hash.slice(0, 8) + ext
+      (ext) => "-" + hash.slice(0, 8) + ext,
     );
 
     toDeploy.set(hashedUrlPath, code);
@@ -132,17 +132,17 @@ export function* deploy(rootDir, { env, styles }) {
     "/bootstrap.js",
     yield readFile(
       join(rootDir, "node_modules/@ellx/app/src/bootstrap/bootstrap.js"),
-      "utf8"
-    )
+      "utf8",
+    ),
   );
 
   const modulesSrc = appendFile(
     "/modules.js",
-    "export default " + JSON.stringify(modules)
+    "export default " + JSON.stringify(modules),
   );
   const sheetsSrc = appendFile(
     "/sheets.js",
-    "export default " + JSON.stringify(sheets)
+    "export default " + JSON.stringify(sheets),
   );
 
   // Prepare index.html body
@@ -174,7 +174,7 @@ export function* deploy(rootDir, { env, styles }) {
 
   yield cps(
     execCommand,
-    `npx tailwindcss -c ${twConfig} -i ${twStylesIn} -o ${twStylesOut}`
+    `npx tailwindcss -c ${twConfig} -i ${twStylesIn} -o ${twStylesOut}`,
   );
 
   const cssSrc = appendFile("/styles.css", yield readFile(twStylesOut, "utf8"));
@@ -185,57 +185,70 @@ export function* deploy(rootDir, { env, styles }) {
 
   toDeploy.set("/index.html", indexHtml);
 
-  console.log(`Deploying ${toDeploy.size} files...`);
-  console.log("Get deployment URLs...");
+  console.log("Getting deployment configs...");
 
-  const data = JSON.parse(fs.readFileSync("deploy.json", "utf8"));
+  const deployConfig = JSON.parse(fs.readFileSync("deploy.json", "utf8"));
 
-  if (!data[env]) {
+  if (!deployConfig[env]) {
     throw new Error(`No deployment configuration for environment ${env}`);
   }
 
-  const deployConfig = data[env];
-
-  const s3 = new aws.S3({
-    region: "ap-northeast-1",
-  });
-  const cf = new aws.CloudFront();
-  let handles = [];
-  for (let [path, content] of toDeploy) {
-    console.log(
-      "Uploading " + path,
-      content.length,
-      getContentType(path),
-      deployConfig.s3
-    );
-    handles.push(
-      s3
-        .putObject({
-          Bucket: deployConfig.s3,
-          Key: path.slice(1),
-          Body: content,
-          ContentType: getContentType(path),
-          ACL: "public-read",
-          CacheControl:
-            path === "/index.html" ? "max-age=60" : "max-age=31536000",
-        })
-        .promise()
-    );
+  if (!process.env.SSH_KEY) {
+    throw new Error("SSH key is not set");
   }
-  const ress = yield Promise.all(handles);
 
-  const res = yield cf
-    .createInvalidation({
-      DistributionId: deployConfig.cloudfront,
-      InvalidationBatch: {
-        Paths: {
-          Quantity: 1,
-          Items: ["/index.html"],
-        },
-        CallerReference: Date.now() + deployConfig.cloudfront,
-      },
+  const { remotePath, remoteServer, remoteUser, remotePort } =
+    deployConfig[env];
+  const privateKey = process.env.SSH_KEY;
+
+  const config = {
+    host: remoteServer,
+    username: remoteUser,
+    port: remotePort,
+    privateKey: privateKey,
+  };
+
+  console.log(`Deploying ${toDeploy.size} files...`);
+  const client = new SftpClient();
+
+  client
+    .connect(config)
+    .then(async () => {
+      try {
+        for (const [localPath, content] of toDeploy) {
+          const remoteFilePath = join(remotePath, localPath);
+          const dir = dirname(remoteFilePath);
+          console.log(`dir: ${dir}`);
+
+          const exists = await client.exists(dir);
+          console.log("Current dir exists:", Boolean(exists));
+          if (!exists) {
+            console.log(`Creating directory: ${dir}`);
+            await client.mkdir(dir, true);
+          }
+          console.log(
+            `Uploading ${localPath} to ${remoteServer}:${remoteFilePath}`,
+          );
+
+          try {
+            await client.put(Buffer.from(content), remoteFilePath);
+
+            console.log(`File ${localPath} uploaded successfully.`);
+          } catch (err) {
+            console.error(`Error during upload of ${localPath}: ${err}`);
+          }
+        }
+
+        console.log("All files uploaded successfully.");
+      } catch (err) {
+        console.error(`Error during deployment: ${err}`);
+      } finally {
+        await client.end();
+        console.log("Deployment complete");
+      }
     })
-    .promise();
-
-  console.log("Deployment complete", deployConfig.url, ress, res);
+    .catch((err) => {
+      console.log(`Error: ${err.message}`);
+      client.end();
+    });
 }
