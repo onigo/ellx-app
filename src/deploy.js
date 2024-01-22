@@ -241,13 +241,13 @@ export function* deploy(rootDir, { env, styles }) {
       }
 
       console.log("Connected. Check if dir already exists");
-      const alreadyExists = await client.exists(targetPath);
+      const alreadyExists = await client.exists(dir);
 
       if (alreadyExists) {
-        console.log(`Path ${targetPath} already exists!`);
+        console.log(`Path ${dir} already exists!`);
       } else {
         console.log("Making directory");
-        await client.mkdir(targetPath, true);
+        await client.mkdir(dir, true);
         console.log("Directory created");
       }
     })
