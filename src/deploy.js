@@ -222,26 +222,27 @@ export function* deploy(rootDir, { env, styles }) {
           // Recursively create all parent directories if they don't exist
           await new Promise((resolve, reject) => {
             const createDirectoriesRecursively = (currentPath, callback) => {
-              const parentDir = dirname(currentPath);
+              const parts = currentPath.split("/");
+              let currentPathIndex = 1;
 
-              sftp.stat(parentDir, (err, stats) => {
-                if (err) {
-                  // Parent directory doesn't exist, create it
-                  createDirectoriesRecursively(parentDir, () => {
-                    sftp.mkdir(parentDir, { recursive: true }, (mkdirErr) => {
-                      if (mkdirErr) {
-                        console.error(`Error creating directory: ${parentDir}`);
-                        reject(mkdirErr);
-                      } else {
-                        callback();
-                      }
-                    });
-                  });
-                } else {
-                  // Parent directory exists, continue to the next level
-                  callback();
-                }
-              });
+              const createNextDirectory = () => {
+                const pathSoFar = parts.slice(0, currentPathIndex).join("/");
+                sftp.mkdir(pathSoFar, {}, (mkdirErr) => {
+                  if (mkdirErr && mkdirErr.code !== 4 /* SSH_FX_FAILURE */) {
+                    console.error(`Error creating directory: ${pathSoFar}`);
+                    reject(mkdirErr);
+                  } else {
+                    currentPathIndex++;
+                    if (currentPathIndex <= parts.length) {
+                      createNextDirectory();
+                    } else {
+                      callback();
+                    }
+                  }
+                });
+              };
+
+              createNextDirectory();
             };
 
             createDirectoriesRecursively(remoteDir, resolve);
