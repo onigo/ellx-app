@@ -218,15 +218,18 @@ export function* deploy(rootDir, { env, styles }) {
         for (const [localPath, content] of toDeploy) {
           const remoteFilePath = join(remotePath, localPath);
           const dir = dirname(remoteFilePath);
+          console.log(`dir: ${dir}`);
 
           console.log(
             `Uploading ${localPath} to ${remoteServer}:${remoteFilePath}`,
           );
 
           // Validate and create parent directories if needed
+          console.log("Calling createRemoteDirectories");
           await createRemoteDirectories(client, dir);
 
           // Upload the file
+          console.log(`Uploading file...${remoteFilePath}`);
           await client.put(Buffer.from(content), remoteFilePath);
 
           console.log(`File ${localPath} uploaded successfully.`);
@@ -248,12 +251,16 @@ export function* deploy(rootDir, { env, styles }) {
 
 async function createRemoteDirectories(client, remoteDir) {
   const parts = remoteDir.split("/");
+  console.log(`parts: ${parts}`);
   let currentDir = "";
 
   for (const part of parts) {
+    console.log(`part: ${part}`);
     currentDir = join(currentDir, part);
+    console.log("current dir:", currentDir);
 
     const exists = await client.exists(currentDir);
+    console.log("Current dir exists:", exists);
     if (!exists) {
       console.log(`Creating directory: ${currentDir}`);
       await client.mkdir(currentDir);
