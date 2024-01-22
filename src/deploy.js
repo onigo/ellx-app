@@ -220,19 +220,25 @@ export function* deploy(rootDir, { env, styles }) {
           const dir = dirname(remoteFilePath);
           console.log(`dir: ${dir}`);
 
+          const exists = await client.exists(dir);
+          console.log("Current dir exists:", exists);
+          if (!exists) {
+            console.log(`Creating directory: ${dir}`);
+            await client.mkdir(dir, true);
+          }
           console.log(
             `Uploading ${localPath} to ${remoteServer}:${remoteFilePath}`,
           );
 
-          // Validate and create parent directories if needed
-          console.log("Calling createRemoteDirectories");
-          await createRemoteDirectories(client, dir);
+          try {
+            // Upload the file
+            console.log(`Uploading file...${remoteFilePath}`);
+            await client.put(Buffer.from(content), remoteFilePath);
 
-          // Upload the file
-          console.log(`Uploading file...${remoteFilePath}`);
-          await client.put(Buffer.from(content), remoteFilePath);
-
-          console.log(`File ${localPath} uploaded successfully.`);
+            console.log(`File ${localPath} uploaded successfully.`);
+          } catch (err) {
+            console.error(`Error during upload of ${localPath}: ${err}`);
+          }
         }
 
         console.log("All files uploaded successfully.");
@@ -247,23 +253,4 @@ export function* deploy(rootDir, { env, styles }) {
       console.log(`Error: ${err.message}`);
       client.end();
     });
-}
-
-async function createRemoteDirectories(client, remoteDir) {
-  const parts = remoteDir.split("/");
-  console.log(`parts: ${parts}`);
-  let currentDir = "";
-
-  for (const part of parts) {
-    console.log(`part: ${part}`);
-    currentDir = join(currentDir, part);
-    console.log("current dir:", currentDir);
-
-    const exists = await client.exists(currentDir);
-    console.log("Current dir exists:", exists);
-    if (!exists) {
-      console.log(`Creating directory: ${currentDir}`);
-      await client.mkdir(currentDir);
-    }
-  }
 }
