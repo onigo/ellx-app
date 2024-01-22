@@ -216,7 +216,7 @@ export function* deploy(rootDir, { env, styles }) {
           );
 
           // Validate and create directories if needed
-          await createRemoteDirectories(remoteFilePath);
+          await createRemoteDirectories(sftp, remoteFilePath);
 
           await sftp.put(Buffer.from(content), remoteFilePath);
 
@@ -246,7 +246,7 @@ export function* deploy(rootDir, { env, styles }) {
       debug: console.log,
     });
 }
-async function createRemoteDirectories(remoteFilePath) {
+async function createRemoteDirectories(sftp, remoteFilePath) {
   const directories = remoteFilePath.split("/").slice(0, -1);
 
   for (let i = 1; i <= directories.length; i++) {
