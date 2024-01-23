@@ -7,12 +7,11 @@ import polka from "polka";
 
 import serve from "serve-static";
 import { fileURLToPath } from "url";
-import { readFile } from "fs";
 import open from "open";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-import { resolveIndex } from './resolve_index.js';
+import { resolveIndex } from "./resolve_index.js";
 import { startDevPipe } from "./dev_pipe.js";
 import { deploy } from "./deploy.js";
 
@@ -42,9 +41,10 @@ if (mainOptions.command === "start") {
 
   polka({ server })
     .use(serve(publicDir))
-    .get("*", (req, res, next) => resolveIndex(publicDir, process.cwd())
-      .then(body => res.end(body))
-      .catch(error => next(error))
+    .get("*", (_req, res, next) =>
+      resolveIndex(publicDir, process.cwd())
+        .then((body) => res.end(body))
+        .catch((error) => next(error)),
     )
     .listen(config.port, (err) => {
       if (err) throw err;
@@ -57,8 +57,7 @@ if (mainOptions.command === "start") {
   const wss = new WebSocket.Server({ server, path: "/@@dev" });
 
   wss.on("connection", (ws) => startDevPipe(ws, process.cwd()));
-}
-else if (mainOptions.command === "deploy") {
+} else if (mainOptions.command === "deploy") {
   const deployDefinitions = [
     {
       name: "env",
@@ -71,7 +70,7 @@ else if (mainOptions.command === "deploy") {
       defaultValue: "node_modules/@ellx/app/src/input.css",
       type: String,
       alias: "s",
-    }
+    },
   ];
 
   const config = commandLineArgs(deployDefinitions, { argv });
@@ -79,8 +78,7 @@ else if (mainOptions.command === "deploy") {
   conclude(deploy(process.cwd(), config), (err) => {
     if (err) console.error(err);
   });
-}
-else {
+} else {
   console.log(`Please specify a command:
     start
     login (WIP)
