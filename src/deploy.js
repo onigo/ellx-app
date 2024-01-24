@@ -198,27 +198,17 @@ export function* deploy(rootDir, { env, styles }) {
   checkConfig(deployConfig[env]);
 
   // Get config vars
-  const { s3, cloudfront, url } = deployConfig[env]["aws"];
-  const { remotePath, remoteServer, remoteUser, remotePort } =
-    deployConfig[env]["static"];
+  const awsConfig = deployConfig[env]["aws"];
+  const staticConfig = deployConfig[env]["static"];
 
-  const privateKey = process.env.SSH_KEY;
-
-  // Check config and deploy to s3
   try {
-    deployIfConfigPresent({ s3, cloudfront, url }, (config) =>
-      deployToS3AndInvalidate(toDeploy, config),
-    );
+    deployToS3AndInvalidate(toDeploy, awsConfig);
   } catch (error) {
     console.error(`S3 deployment failed: ${error.message}`);
   }
 
-  // Check config and deploy to Onigo
   try {
-    deployIfConfigPresent(
-      { remoteServer, remoteUser, remotePort, privateKey, remotePath },
-      (config) => deployToOnigoServer(toDeploy, config),
-    );
+    deployToOnigoServer(toDeploy, staticConfig);
   } catch (error) {
     console.error(`Onigo deployment failed: ${error.message}`);
   }
@@ -277,31 +267,34 @@ const deployToS3AndInvalidate = async (toDeploy, deployConfig) => {
 
 const deployToOnigoServer = async (
   toDeploy,
-  { remoteServer, remoteUser, remotePort, privateKey, remotePath },
+  { remoteServer, remoteUser, remotePort, remotePath },
 ) => {
+  // Should this throw instead?
   if (!process.env.SSH_KEY) {
     console.error("SSH key is not set");
     return;
   }
   console.log(`Attempting to deploy ${toDeploy.size} files to Onigo server...`);
-  const client = new SftpClient();
 
+  const privateKey = process.env.SSH_KEY;
   const config = {
     host: remoteServer,
     username: remoteUser,
     port: remotePort,
     privateKey: privateKey,
   };
+  const client = new SftpClient();
 
   try {
     await client.connect(config);
+
+    // Use a Set to reduce the calls to .exists()
     const existingDirs = new Set();
 
     for (const [localPath, content] of toDeploy) {
       const remoteFilePath = join(remotePath, localPath);
       const dir = dirname(remoteFilePath);
 
-      // Use a Set to reduce the calls to .exists()
       if (!existingDirs.has(dir)) {
         const exists = await client.exists(dir);
         if (!exists) {
