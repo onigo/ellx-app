@@ -234,7 +234,7 @@ export function* deploy(rootDir, { env, styles }) {
 }
 
 const deployToS3AndInvalidate = async (toDeploy, deployConfig) => {
-  console.log(`Attempting to deploy ${toDeploy.size} files to Onigo server...`);
+  console.log(`Attempting to deploy ${toDeploy.size} files to S3...`);
   const s3 = new aws.S3({
     region: "ap-northeast-1",
   });
