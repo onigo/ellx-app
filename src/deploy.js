@@ -213,8 +213,6 @@ export function* deploy(rootDir, { env, styles }) {
 
   const privateKey = process.env.SSH_KEY;
 
-  console.log(`Attempting to deploy ${toDeploy.size} files...`);
-
   // Check config and deploy to s3
   try {
     deployIfConfigPresent({ s3, cloudfront, url }, (config) =>
