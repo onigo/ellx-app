@@ -195,21 +195,12 @@ export function* deploy(rootDir, { env, styles }) {
   if (!deployConfig[env]) {
     throw new Error(`No deployment configuration for environment ${env}`);
   }
-
-  if (!process.env.SSH_KEY) {
-    throw new Error("SSH key is not set");
-  }
+  checkConfig(deployConfig[env]);
 
   // Get config vars
-  const {
-    s3,
-    cloudfront,
-    url,
-    remotePath,
-    remoteServer,
-    remoteUser,
-    remotePort,
-  } = deployConfig[env];
+  const { s3, cloudfront, url } = deployConfig[env]["aws"];
+  const { remotePath, remoteServer, remoteUser, remotePort } =
+    deployConfig[env]["static"];
 
   const privateKey = process.env.SSH_KEY;
 
@@ -288,6 +279,10 @@ const deployToOnigoServer = async (
   toDeploy,
   { remoteServer, remoteUser, remotePort, privateKey, remotePath },
 ) => {
+  if (!process.env.SSH_KEY) {
+    console.error("SSH key is not set");
+    return;
+  }
   console.log(`Attempting to deploy ${toDeploy.size} files to Onigo server...`);
   const client = new SftpClient();
 
@@ -339,9 +334,15 @@ const deployToOnigoServer = async (
   }
 };
 
-// Checks if all the config values a truthy and if so, calls the deployment function.
-const deployIfConfigPresent = async (config, deployFunction) => {
-  if (Object.values(config).every((value) => !!value)) {
-    await deployFunction(config);
+// Checks if all the config values are truthy
+const checkConfig = async (config) => {
+  const allValuesPresent = Object.values(config).every((value) => !!value);
+
+  if (allValuesPresent) {
+    return;
   }
+
+  const missingKeys = Object.keys(config).filter((key) => !config[key]);
+  const missingKeysString = missingKeys.join(", ");
+  throw new Error(`Missing config values in deploy.js: ${missingKeysString}`);
 };
