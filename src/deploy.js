@@ -195,22 +195,25 @@ export function* deploy(rootDir, { env, styles }) {
   if (!deployConfig[env]) {
     throw new Error(`No deployment configuration for environment ${env}`);
   }
-  checkConfig(deployConfig[env]);
 
   // Get config vars
   const awsConfig = deployConfig[env]["aws"];
   const staticConfig = deployConfig[env]["static"];
 
-  try {
-    deployToS3AndInvalidate(toDeploy, awsConfig);
-  } catch (error) {
-    console.error(`S3 deployment failed: ${error.message}`);
+  if (awsConfigIsValid(awsConfig)) {
+    try {
+      deployToS3AndInvalidate(toDeploy, awsConfig);
+    } catch (error) {
+      console.error(`S3 deployment failed: ${error.message}`);
+    }
   }
 
-  try {
-    deployToOnigoServer(toDeploy, staticConfig);
-  } catch (error) {
-    console.error(`Onigo deployment failed: ${error.message}`);
+  if (staticConfigIsValid(staticConfig)) {
+    try {
+      deployToOnigoServer(toDeploy, staticConfig);
+    } catch (error) {
+      console.error(`Onigo deployment failed: ${error.message}`);
+    }
   }
 }
 
@@ -327,15 +330,33 @@ const deployToOnigoServer = async (
   }
 };
 
-// Checks if all the config values are truthy
-const checkConfig = async (config) => {
-  const allValuesPresent = Object.values(config).every((value) => !!value);
+const staticConfigIsValid = (staticConfig) => {
+  const requiredKeys = [
+    "remotePath",
+    "remoteServer",
+    "remoteUser",
+    "remotePort",
+  ];
 
-  if (allValuesPresent) {
-    return;
+  for (const key of requiredKeys) {
+    if (!staticConfig || !(key in staticConfig) || !staticConfig[key]) {
+      throw new Error(
+        `Missing or falsy value for key '${key}' in static configuration`,
+      );
+    }
   }
+  return true;
+};
 
-  const missingKeys = Object.keys(config).filter((key) => !config[key]);
-  const missingKeysString = missingKeys.join(", ");
-  throw new Error(`Missing config values in deploy.js: ${missingKeysString}`);
+const awsConfigIsValid = (awsConfig) => {
+  const requiredKeys = ["url", "cloudfront", "s3"];
+
+  for (const key of requiredKeys) {
+    if (!awsConfig || !(key in awsConfig) || !awsConfig[key]) {
+      throw new Error(
+        `Missing or falsy value for key '${key}' in AWS configuration`,
+      );
+    }
+  }
+  return true;
 };
