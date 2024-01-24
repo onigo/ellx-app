@@ -1,3 +1,4 @@
+import aws from "aws-sdk";
 import { exec } from "child_process";
 import chokidar from "chokidar";
 import { all } from "conclure/combinators";
@@ -11,6 +12,7 @@ import { fileURLToPath, pathToFileURL } from "url";
 import reactiveBuild from "./bundler/reactive_build.js";
 import { resolveIndex } from "./resolve_index.js";
 import { loadBody as parseEllx } from "./sandbox/body_parse.js";
+
 const execCommand = (cmd, cb) => {
   const child = exec(cmd, (err, stdout, stderr) => {
     console.log(stdout);
@@ -179,13 +181,14 @@ export function* deploy(rootDir, { env, styles }) {
 
   const cssSrc = appendFile("/styles.css", yield readFile(twStylesOut, "utf8"));
 
+  console.log("Generating index.html...");
   const indexHtml = (yield resolveIndex(publicDir, rootDir))
     .replace(`<script type="module" src="/sandbox.js"></script>`, injection)
     .replace("/sandbox.css", cssSrc);
 
   toDeploy.set("/index.html", indexHtml);
 
-  console.log("Getting deployment configs...");
+  console.log("Getting deployment config...");
 
   const deployConfig = JSON.parse(fs.readFileSync("deploy.json", "utf8"));
 
@@ -197,9 +200,98 @@ export function* deploy(rootDir, { env, styles }) {
     throw new Error("SSH key is not set");
   }
 
-  const { remotePath, remoteServer, remoteUser, remotePort } =
-    deployConfig[env];
+  // Get config vars
+  const {
+    s3,
+    cloudfront,
+    url,
+    remotePath,
+    remoteServer,
+    remoteUser,
+    remotePort,
+  } = deployConfig[env];
+
   const privateKey = process.env.SSH_KEY;
+
+  console.log(`Attempting to deploy ${toDeploy.size} files...`);
+
+  // Check config and deploy to s3
+  try {
+    deployIfConfigPresent({ s3, cloudfront, url }, (config) =>
+      deployToS3AndInvalidate(toDeploy, config),
+    );
+  } catch (error) {
+    console.error(`S3 deployment failed: ${error.message}`);
+  }
+
+  // Check config and deploy to Onigo
+  try {
+    deployIfConfigPresent(
+      { remoteServer, remoteUser, remotePort, privateKey, remotePath },
+      (config) => deployToOnigoServer(toDeploy, config),
+    );
+  } catch (error) {
+    console.error(`Onigo deployment failed: ${error.message}`);
+  }
+}
+
+const deployToS3AndInvalidate = async (toDeploy, deployConfig) => {
+  console.log(`Attempting to deploy ${toDeploy.size} files to Onigo server...`);
+  const s3 = new aws.S3({
+    region: "ap-northeast-1",
+  });
+
+  const cf = new aws.CloudFront();
+  const handles = [];
+
+  for (let [path, content] of toDeploy) {
+    console.log(
+      "Uploading " + path,
+      content.length,
+      getContentType(path),
+      deployConfig.s3,
+    );
+
+    handles.push(
+      s3
+        .putObject({
+          Bucket: deployConfig.s3,
+          Key: path.slice(1),
+          Body: content,
+          ContentType: getContentType(path),
+          ACL: "public-read",
+          CacheControl:
+            path === "/index.html" ? "max-age=60" : "max-age=31536000",
+        })
+        .promise(),
+    );
+  }
+
+  const ress = await Promise.all(handles);
+
+  // CloudFront Invalidation
+  const res = await cf
+    .createInvalidation({
+      DistributionId: deployConfig.cloudfront,
+      InvalidationBatch: {
+        Paths: {
+          Quantity: 1,
+          Items: ["/index.html"],
+        },
+        CallerReference: Date.now() + deployConfig.cloudfront,
+      },
+    })
+    .promise();
+
+  console.log("Deployment to S3 complete", deployConfig.url, ress, res);
+};
+
+const deployToOnigoServer = async (
+  toDeploy,
+  { remoteServer, remoteUser, remotePort, privateKey, remotePath },
+) => {
+  console.log(`Attempting to deploy ${toDeploy.size} files to Onigo server...`);
+  const client = new SftpClient();
 
   const config = {
     host: remoteServer,
@@ -208,47 +300,50 @@ export function* deploy(rootDir, { env, styles }) {
     privateKey: privateKey,
   };
 
-  console.log(`Deploying ${toDeploy.size} files...`);
-  const client = new SftpClient();
+  try {
+    await client.connect(config);
+    const existingDirs = new Set();
 
-  client
-    .connect(config)
-    .then(async () => {
-      try {
-        for (const [localPath, content] of toDeploy) {
-          const remoteFilePath = join(remotePath, localPath);
-          const dir = dirname(remoteFilePath);
-          console.log(`dir: ${dir}`);
+    for (const [localPath, content] of toDeploy) {
+      const remoteFilePath = join(remotePath, localPath);
+      const dir = dirname(remoteFilePath);
 
-          const exists = await client.exists(dir);
-          console.log("Current dir exists:", Boolean(exists));
-          if (!exists) {
-            console.log(`Creating directory: ${dir}`);
-            await client.mkdir(dir, true);
-          }
-          console.log(
-            `Uploading ${localPath} to ${remoteServer}:${remoteFilePath}`,
-          );
-
-          try {
-            await client.put(Buffer.from(content), remoteFilePath);
-
-            console.log(`File ${localPath} uploaded successfully.`);
-          } catch (err) {
-            console.error(`Error during upload of ${localPath}: ${err}`);
-          }
+      // Use a Set to reduce the calls to .exists()
+      if (!existingDirs.has(dir)) {
+        const exists = await client.exists(dir);
+        if (!exists) {
+          console.log(`Creating directory: ${dir}`);
+          await client.mkdir(dir, true);
         }
-
-        console.log("All files uploaded successfully.");
-      } catch (err) {
-        console.error(`Error during deployment: ${err}`);
-      } finally {
-        await client.end();
-        console.log("Deployment complete");
+        existingDirs.add(dir);
       }
-    })
-    .catch((err) => {
-      console.log(`Error: ${err.message}`);
-      client.end();
-    });
-}
+
+      console.log(
+        `Uploading ${localPath} to ${remoteServer}:${remoteFilePath}`,
+      );
+
+      try {
+        // Upload the file
+        await client.put(Buffer.from(content), remoteFilePath);
+
+        console.log(`File ${localPath} uploaded successfully.`);
+      } catch (err) {
+        console.error(`Error during upload of ${localPath}: ${err}`);
+      }
+    }
+
+    console.log("All files uploaded successfully.");
+  } catch (err) {
+    console.error(`Error during onigo server deployment: ${err}`);
+  } finally {
+    await client.end();
+    console.log("Deployment to Onigo server complete");
+  }
+};
+
+// Checks if all the config values a truthy and if so, calls the deployment function.
+const deployIfConfigPresent = async (config, deployFunction) => {
+  if (Object.values(config).every((value) => !!value)) {
+    await deployFunction(config);
+  }
+};
