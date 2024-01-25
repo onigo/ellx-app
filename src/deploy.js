@@ -306,7 +306,13 @@ const deployToS3AndInvalidate = async (toDeploy, deployConfig) => {
 
 const deployToOnigoServer = async (
   toDeploy,
-  { remoteServer, remoteUser, remotePort, remotePath }
+  {
+    remoteServer,
+    remoteUser,
+    remotePort,
+    remotePath,
+    outFilename = "./out.tar.gz",
+  }
 ) => {
   // Should this throw instead?
   if (!process.env.SSH_KEY) {
@@ -333,14 +339,14 @@ const deployToOnigoServer = async (
   await tar(
     {
       gzip: true,
-      file: "./out.tar.gz",
+      file: outFilename,
     },
     ["./tmp"]
   );
 
   const client = new SftpClient();
   await client.connect(config);
-  await client.put("./out.tar.gz", remotePath);
+  await client.put(outFilename, join(remotePath, outFilename));
   await client.end();
 
   console.log("Uploaded successfully.");
