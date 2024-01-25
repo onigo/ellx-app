@@ -340,20 +340,8 @@ const deployToOnigoServer = async (
 
   const client = new SftpClient();
   await client.connect(config);
-  const res = await client.put("./out.tar.gz", `${remotePath}/../out.tar.gz`);
-  console.log(res);
+  await client.put("./out.tar.gz", remotePath);
   await client.end();
-  fs.writeFileSync("./key.pem", privateKey);
-  await exec(`chmod 600 key.pem`);
-  const con = `ssh -o StrictHostKeyChecking=no ${remoteUser}@${remoteServer} -p ${remotePort} -i ./key.pem`;
-  const rrr = await exec(`${con} "cd ${remotePath}/..; tar -xzvf out.tar.gz"`);
-  console.log(rrr);
-
-  await exec(`${con} "rm -rf ${remotePath}/*"`);
-  await exec(`${con} "cd ${remotePath}/..; mv tmp/* ${remotePath}"`);
-  await exec(`${con} "rm ${remotePath}/../out.tar.gz"`);
-  await exec(`rm ./out.tar.gz`);
-  await exec(`rm -rf ./tmp`);
 
   console.log("Uploaded successfully.");
 
