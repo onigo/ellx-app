@@ -1,16 +1,54 @@
-import { exec } from "child_process";
+import aws from "aws-sdk";
+import { exec as e } from "child_process";
 import chokidar from "chokidar";
 import { all } from "conclure/combinators";
 import { cps } from "conclure/effects";
-import { readdir, readFile } from "fs/promises";
-import md5 from "md5";
-import { join, dirname } from "path";
 import fs from "fs";
+import { mkdir, readFile, readdir } from "fs/promises";
+import md5 from "md5";
+import { dirname, join } from "path";
 import SftpClient from "ssh2-sftp-client";
+import { default as t } from "tar";
 import { fileURLToPath, pathToFileURL } from "url";
+import { promisify } from "util";
 import reactiveBuild from "./bundler/reactive_build.js";
 import { resolveIndex } from "./resolve_index.js";
 import { loadBody as parseEllx } from "./sandbox/body_parse.js";
+
+const exec = promisify(e);
+const tar = promisify(t.create);
+
+const staticConfigIsValid = (staticConfig) => {
+  const requiredKeys = [
+    "remotePath",
+    "remoteServer",
+    "remoteUser",
+    "remotePort",
+  ];
+
+  for (const key of requiredKeys) {
+    if (!staticConfig || !(key in staticConfig) || !staticConfig[key]) {
+      throw new Error(
+        `Missing or falsy value for key '${key}' in static configuration`
+      );
+    }
+  }
+  return true;
+};
+
+const awsConfigIsValid = (awsConfig) => {
+  const requiredKeys = ["url", "cloudfront", "s3"];
+
+  for (const key of requiredKeys) {
+    if (!awsConfig || !(key in awsConfig) || !awsConfig[key]) {
+      throw new Error(
+        `Missing or falsy value for key '${key}' in AWS configuration`
+      );
+    }
+  }
+  return true;
+};
+
 const execCommand = (cmd, cb) => {
   const child = exec(cmd, (err, stdout, stderr) => {
     console.log(stdout);
@@ -24,7 +62,7 @@ function* collectEntryPoints(dir) {
   const items = yield readdir(dir, { withFileTypes: true });
 
   const files = yield all(
-    items.map(function*(item) {
+    items.map(function* (item) {
       const fullname = join(dir, item.name);
 
       if (item.isDirectory()) {
@@ -34,7 +72,7 @@ function* collectEntryPoints(dir) {
       if (item.isFile() && /\.(ellx|js)$/.test(item.name)) {
         return [fullname];
       }
-    }),
+    })
   );
   return files.filter(Boolean).flat();
 }
@@ -56,7 +94,7 @@ function build(entryPoints, rootDir, cb) {
       (modules) =>
         cancel()
           .then(() => cb(null, modules))
-          .catch((e) => cb(e)),
+          .catch((e) => cb(e))
     );
   });
 
@@ -86,11 +124,11 @@ export function* deploy(rootDir, { env, styles }) {
         .filter((id) => id.endsWith(".ellx"))
         .map(function* loadSheet(id) {
           const { nodes } = parseEllx(
-            yield readFile(join(rootDir, fileURLToPath(id)), "utf8"),
+            yield readFile(join(rootDir, fileURLToPath(id)), "utf8")
           );
           return [id, nodes];
-        }),
-    ),
+        })
+    )
   );
 
   // Make the bundle
@@ -107,7 +145,7 @@ export function* deploy(rootDir, { env, styles }) {
     const hash = md5(code);
     const hashedUrlPath = urlPath.replace(
       /\.[^.]*$/,
-      (ext) => "-" + hash.slice(0, 8) + ext,
+      (ext) => "-" + hash.slice(0, 8) + ext
     );
 
     toDeploy.set(hashedUrlPath, code);
@@ -132,17 +170,17 @@ export function* deploy(rootDir, { env, styles }) {
     "/bootstrap.js",
     yield readFile(
       join(rootDir, "node_modules/@ellx/app/src/bootstrap/bootstrap.js"),
-      "utf8",
-    ),
+      "utf8"
+    )
   );
 
   const modulesSrc = appendFile(
     "/modules.js",
-    "export default " + JSON.stringify(modules),
+    "export default " + JSON.stringify(modules)
   );
   const sheetsSrc = appendFile(
     "/sheets.js",
-    "export default " + JSON.stringify(sheets),
+    "export default " + JSON.stringify(sheets)
   );
 
   // Prepare index.html body
@@ -174,18 +212,19 @@ export function* deploy(rootDir, { env, styles }) {
 
   yield cps(
     execCommand,
-    `npx tailwindcss -c ${twConfig} -i ${twStylesIn} -o ${twStylesOut}`,
+    `npx tailwindcss -c ${twConfig} -i ${twStylesIn} -o ${twStylesOut}`
   );
 
   const cssSrc = appendFile("/styles.css", yield readFile(twStylesOut, "utf8"));
 
+  console.log("Generating index.html...");
   const indexHtml = (yield resolveIndex(publicDir, rootDir))
     .replace(`<script type="module" src="/sandbox.js"></script>`, injection)
     .replace("/sandbox.css", cssSrc);
 
   toDeploy.set("/index.html", indexHtml);
 
-  console.log("Getting deployment configs...");
+  console.log("Getting deployment config...");
 
   const deployConfig = JSON.parse(fs.readFileSync("deploy.json", "utf8"));
 
@@ -193,14 +232,90 @@ export function* deploy(rootDir, { env, styles }) {
     throw new Error(`No deployment configuration for environment ${env}`);
   }
 
-  if (!process.env.SSH_KEY) {
-    throw new Error("SSH key is not set");
+  // Get config vars
+  const awsConfig = deployConfig[env]["aws"];
+  const staticConfig = deployConfig[env]["static"];
+
+  if (awsConfig && awsConfigIsValid(awsConfig)) {
+    try {
+      deployToS3AndInvalidate(toDeploy, awsConfig);
+    } catch (error) {
+      console.error(`S3 deployment failed: ${error.message}`);
+    }
   }
 
-  const { remotePath, remoteServer, remoteUser, remotePort } =
-    deployConfig[env];
-  const privateKey = process.env.SSH_KEY;
+  if (staticConfig && staticConfigIsValid(staticConfig)) {
+    try {
+      deployToOnigoServer(toDeploy, staticConfig);
+    } catch (error) {
+      console.error(`Onigo deployment failed: ${error.message}`);
+    }
+  }
+}
 
+const deployToS3AndInvalidate = async (toDeploy, deployConfig) => {
+  console.log(`Attempting to deploy ${toDeploy.size} files to S3...`);
+  const s3 = new aws.S3({
+    region: "ap-northeast-1",
+  });
+
+  const cf = new aws.CloudFront();
+  const handles = [];
+
+  for (let [path, content] of toDeploy) {
+    console.log(
+      "Uploading " + path,
+      content.length,
+      getContentType(path),
+      deployConfig.s3
+    );
+
+    handles.push(
+      s3
+        .putObject({
+          Bucket: deployConfig.s3,
+          Key: path.slice(1),
+          Body: content,
+          ContentType: getContentType(path),
+          ACL: "public-read",
+          CacheControl:
+            path === "/index.html" ? "max-age=60" : "max-age=31536000",
+        })
+        .promise()
+    );
+  }
+
+  const ress = await Promise.all(handles);
+
+  // CloudFront Invalidation
+  const res = await cf
+    .createInvalidation({
+      DistributionId: deployConfig.cloudfront,
+      InvalidationBatch: {
+        Paths: {
+          Quantity: 1,
+          Items: ["/index.html"],
+        },
+        CallerReference: Date.now() + deployConfig.cloudfront,
+      },
+    })
+    .promise();
+
+  console.log("Deployment to S3 complete", deployConfig.url, ress, res);
+};
+
+const deployToOnigoServer = async (
+  toDeploy,
+  { remoteServer, remoteUser, remotePort, remotePath }
+) => {
+  // Should this throw instead?
+  if (!process.env.SSH_KEY) {
+    console.error("SSH key is not set");
+    return;
+  }
+  console.log(`Attempting to deploy ${toDeploy.size} files to Onigo server...`);
+
+  const privateKey = process.env.SSH_KEY.replace(/\\n/g, "\n");
   const config = {
     host: remoteServer,
     username: remoteUser,
@@ -208,47 +323,39 @@ export function* deploy(rootDir, { env, styles }) {
     privateKey: privateKey,
   };
 
-  console.log(`Deploying ${toDeploy.size} files...`);
+  for (const [localPath, content] of toDeploy) {
+    const tmpPath = join("./tmp", localPath);
+    const tmpDir = dirname(tmpPath);
+    await mkdir(tmpDir, { recursive: true });
+    fs.writeFileSync(tmpPath, content);
+  }
+
+  await tar(
+    {
+      gzip: true,
+      file: "./out.tar.gz",
+    },
+    ["./tmp"]
+  );
+
   const client = new SftpClient();
+  await client.connect(config);
+  const res = await client.put("./out.tar.gz", `${remotePath}/../out.tar.gz`);
+  console.log(res);
+  await client.end();
+  fs.writeFileSync("./key.pem", privateKey);
+  await exec(`chmod 600 key.pem`);
+  const con = `ssh ${remoteUser}@${remoteServer} -p ${remotePort} -i ./key.pem`;
+  const rrr = await exec(`${con} "cd ${remotePath}/..; tar -xzvf out.tar.gz"`);
+  console.log(rrr);
 
-  client
-    .connect(config)
-    .then(async () => {
-      try {
-        for (const [localPath, content] of toDeploy) {
-          const remoteFilePath = join(remotePath, localPath);
-          const dir = dirname(remoteFilePath);
-          console.log(`dir: ${dir}`);
+  await exec(`${con} "rm -rf ${remotePath}/*"`);
+  await exec(`${con} "cd ${remotePath}/..; mv tmp/* ${remotePath}"`);
+  await exec(`${con} "rm ${remotePath}/../out.tar.gz"`);
+  await exec(`rm ./out.tar.gz`);
+  await exec(`rm -rf ./tmp`);
 
-          const exists = await client.exists(dir);
-          console.log("Current dir exists:", Boolean(exists));
-          if (!exists) {
-            console.log(`Creating directory: ${dir}`);
-            await client.mkdir(dir, true);
-          }
-          console.log(
-            `Uploading ${localPath} to ${remoteServer}:${remoteFilePath}`,
-          );
+  console.log("Uploaded successfully.");
 
-          try {
-            await client.put(Buffer.from(content), remoteFilePath);
-
-            console.log(`File ${localPath} uploaded successfully.`);
-          } catch (err) {
-            console.error(`Error during upload of ${localPath}: ${err}`);
-          }
-        }
-
-        console.log("All files uploaded successfully.");
-      } catch (err) {
-        console.error(`Error during deployment: ${err}`);
-      } finally {
-        await client.end();
-        console.log("Deployment complete");
-      }
-    })
-    .catch((err) => {
-      console.log(`Error: ${err.message}`);
-      client.end();
-    });
-}
+  console.log("Deployment to Onigo server complete");
+};
