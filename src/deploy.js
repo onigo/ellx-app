@@ -345,7 +345,7 @@ const deployToOnigoServer = async (
   await client.end();
   fs.writeFileSync("./key.pem", privateKey);
   await exec(`chmod 600 key.pem`);
-  const con = `ssh ${remoteUser}@${remoteServer} -p ${remotePort} -i ./key.pem`;
+  const con = `ssh -o StrictHostKeyChecking=no ${remoteUser}@${remoteServer} -p ${remotePort} -i ./key.pem`;
   const rrr = await exec(`${con} "cd ${remotePath}/..; tar -xzvf out.tar.gz"`);
   console.log(rrr);
 
