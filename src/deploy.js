@@ -1,4 +1,3 @@
-import aws from "aws-sdk";
 import { exec as e } from "child_process";
 import chokidar from "chokidar";
 import { all } from "conclure/combinators";
@@ -30,19 +29,6 @@ const staticConfigIsValid = (staticConfig) => {
     if (!staticConfig || !(key in staticConfig) || !staticConfig[key]) {
       throw new Error(
         `Missing or falsy value for key '${key}' in static configuration`
-      );
-    }
-  }
-  return true;
-};
-
-const awsConfigIsValid = (awsConfig) => {
-  const requiredKeys = ["url", "cloudfront", "s3"];
-
-  for (const key of requiredKeys) {
-    if (!awsConfig || !(key in awsConfig) || !awsConfig[key]) {
-      throw new Error(
-        `Missing or falsy value for key '${key}' in AWS configuration`
       );
     }
   }
@@ -232,17 +218,7 @@ export function* deploy(rootDir, { env, styles }) {
     throw new Error(`No deployment configuration for environment ${env}`);
   }
 
-  // Get config vars
-  const awsConfig = deployConfig[env]["aws"];
   const staticConfig = deployConfig[env]["static"];
-
-  if (awsConfig && awsConfigIsValid(awsConfig)) {
-    try {
-      deployToS3AndInvalidate(toDeploy, awsConfig);
-    } catch (error) {
-      console.error(`S3 deployment failed: ${error.message}`);
-    }
-  }
 
   if (staticConfig && staticConfigIsValid(staticConfig)) {
     try {
@@ -252,57 +228,6 @@ export function* deploy(rootDir, { env, styles }) {
     }
   }
 }
-
-const deployToS3AndInvalidate = async (toDeploy, deployConfig) => {
-  console.log(`Attempting to deploy ${toDeploy.size} files to S3...`);
-  const s3 = new aws.S3({
-    region: "ap-northeast-1",
-  });
-
-  const cf = new aws.CloudFront();
-  const handles = [];
-
-  for (let [path, content] of toDeploy) {
-    console.log(
-      "Uploading " + path,
-      content.length,
-      getContentType(path),
-      deployConfig.s3
-    );
-
-    handles.push(
-      s3
-        .putObject({
-          Bucket: deployConfig.s3,
-          Key: path.slice(1),
-          Body: content,
-          ContentType: getContentType(path),
-          ACL: "public-read",
-          CacheControl:
-            path === "/index.html" ? "max-age=60" : "max-age=31536000",
-        })
-        .promise()
-    );
-  }
-
-  const ress = await Promise.all(handles);
-
-  // CloudFront Invalidation
-  const res = await cf
-    .createInvalidation({
-      DistributionId: deployConfig.cloudfront,
-      InvalidationBatch: {
-        Paths: {
-          Quantity: 1,
-          Items: ["/index.html"],
-        },
-        CallerReference: Date.now() + deployConfig.cloudfront,
-      },
-    })
-    .promise();
-
-  console.log("Deployment to S3 complete", deployConfig.url, ress, res);
-};
 
 const deployToOnigoServer = async (
   toDeploy,
