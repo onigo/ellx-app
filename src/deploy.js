@@ -97,7 +97,7 @@ function getContentType(path) {
   return "application/javascript";
 }
 
-export function* deploy(rootDir, { env, styles }) {
+export function* deploy(rootDir, { env, styles, local }) {
   const files = (yield collectEntryPoints(`${rootDir}/src`))
     .map((path) => path.slice(rootDir.length))
     .map((path) => pathToFileURL(path).href)
@@ -214,7 +214,7 @@ export function* deploy(rootDir, { env, styles }) {
 
   const deployConfig = JSON.parse(fs.readFileSync("deploy.json", "utf8"));
 
-  if (!deployConfig[env]) {
+  if (!deployConfig[env] && !local) {
     throw new Error(`No deployment configuration for environment ${env}`);
   }
 
@@ -222,7 +222,7 @@ export function* deploy(rootDir, { env, styles }) {
 
   if (staticConfig && staticConfigIsValid(staticConfig)) {
     try {
-      deployToOnigoServer(toDeploy, staticConfig);
+      deployToOnigoServer(toDeploy, staticConfig, local);
     } catch (error) {
       console.error(`Onigo deployment failed: ${error.message}`);
     }
@@ -237,14 +237,16 @@ const deployToOnigoServer = async (
     remotePort,
     remotePath,
     outFilename = "./out.tar.gz",
-  }
+  },
+  local
 ) => {
   // Should this throw instead?
   if (!process.env.SSH_KEY) {
     console.error("SSH key is not set");
     return;
   }
-  console.log(`Attempting to deploy ${toDeploy.size} files to Onigo server...`);
+
+  const BUILD_PATH= "./dist";
 
   const privateKey = process.env.SSH_KEY.replace(/\\n/g, "\n");
   const config = {
@@ -255,18 +257,24 @@ const deployToOnigoServer = async (
   };
 
   for (const [localPath, content] of toDeploy) {
-    const tmpPath = join("./tmp", localPath);
+    const tmpPath = join(BUILD_PATH, localPath);
     const tmpDir = dirname(tmpPath);
     await mkdir(tmpDir, { recursive: true });
     fs.writeFileSync(tmpPath, content);
   }
+
+  if (local) {
+    return;
+  }
+
+  console.log(`Attempting to deploy ${toDeploy.size} files to Onigo server...`);
 
   await tar(
     {
       gzip: true,
       file: outFilename,
     },
-    ["./tmp"]
+    [BUILD_PATH]
   );
 
   const client = new SftpClient();

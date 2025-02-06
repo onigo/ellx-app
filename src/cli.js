@@ -1,19 +1,19 @@
 #!/usr/bin/env node
-import http from "http";
-import WebSocket from "ws";
 import commandLineArgs from "command-line-args";
-import { join, dirname } from "path";
+import http from "http";
+import { dirname, join } from "path";
 import polka from "polka";
+import WebSocket from "ws";
 
+import open from "open";
 import serve from "serve-static";
 import { fileURLToPath } from "url";
-import open from "open";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-import { resolveIndex } from "./resolve_index.js";
-import { startDevPipe } from "./dev_pipe.js";
 import { deploy } from "./deploy.js";
+import { startDevPipe } from "./dev_pipe.js";
+import { resolveIndex } from "./resolve_index.js";
 
 import { conclude } from "conclure";
 
@@ -71,6 +71,7 @@ if (mainOptions.command === "start") {
       type: String,
       alias: "s",
     },
+    { name: "local", alias: "l", type: Boolean },
   ];
 
   const config = commandLineArgs(deployDefinitions, { argv });
